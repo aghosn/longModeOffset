@@ -9,6 +9,18 @@ import (
 	"unsafe"
 )
 
+// works for  134217727
+// doesnt for 134217730
+// trying for 134217730
+
+// winner work 134217727
+// winner doesn't 134217728
+
+const (
+	bonusOffset = uintptr(20 * _PageSize)
+	_mmapHint   = uintptr(0x100000)
+)
+
 func vmInit(vm *fakeVm) {
 	sysFd, err := os.OpenFile(_KVM_DRIVER_PATH, syscall.O_RDWR, 0)
 	if err != nil {
@@ -33,7 +45,7 @@ func mapAreas(vm *fakeVm) {
 	)
 
 	// This is for the code.
-	vm.mem, errno = commons.Mmap(0, _PageSize, syscall.PROT_READ|syscall.PROT_WRITE,
+	vm.mem, errno = commons.Mmap(_mmapHint, _PageSize, syscall.PROT_READ|syscall.PROT_WRITE,
 		syscall.MAP_PRIVATE|syscall.MAP_ANONYMOUS, -1, 0)
 	if errno != 0 {
 		panic("Damn mmap")
@@ -52,19 +64,9 @@ func mapAreas(vm *fakeVm) {
 	if errno != 0 {
 		panic("Damn mmap 2")
 	}
-
-	// Register the code at the right spot.
-	memregs := userMemoryRegion{
-		slot:          0,
-		flags:         0,
-		guestPhysAddr: uint64(vm.mem),
-		memorySize:    uint64(_PageSize),
-		userspaceAddr: uint64(vm.mem),
-	}
-
 	// Register the pagetables at the beginning.
 	ptregs := userMemoryRegion{
-		slot:          1,
+		slot:          0,
 		flags:         0,
 		guestPhysAddr: 0,
 		memorySize:    uint64(20 * _PageSize),
@@ -73,11 +75,20 @@ func mapAreas(vm *fakeVm) {
 
 	// Map the bonus area after the page tables.
 	bonusRegs := userMemoryRegion{
-		slot:          2,
+		slot:          1,
 		flags:         0,
-		guestPhysAddr: uint64(20 * _PageSize),
+		guestPhysAddr: uint64(bonusOffset),
 		memorySize:    _PageSize,
 		userspaceAddr: uint64(vm.bonus),
+	}
+
+	// Register the code at the right spot.
+	memregs := userMemoryRegion{
+		slot:          2,
+		flags:         0,
+		guestPhysAddr: uint64(vm.mem),
+		memorySize:    uint64(_PageSize),
+		userspaceAddr: uint64(vm.mem),
 	}
 
 	// do the ioctls.
@@ -141,7 +152,7 @@ func initPageTables(vm *fakeVm) {
 	pml4[pml4Idx] = old.PTE_P | old.PTE_W | old.PTE_U | pdptAddr
 	pdpt[pdptIdx] = old.PTE_P | old.PTE_W | old.PTE_U | pdAddr
 	pd[pdIdx] = old.PTE_P | old.PTE_W | old.PTE_U | pteAddr
-	pte[pteIdx] = old.PTE_P | old.PTE_W | old.PTE_U | (20 * _PageSize) //vm.mem
+	pte[pteIdx] = old.PTE_P | old.PTE_W | old.PTE_U | (bonusOffset)
 	fmt.Printf("memory address %x\n", vm.mem)
 	fmt.Printf("pml4: %d, pdpt: %d, pd: %d, pte: %d\n", pml4Idx, pdptIdx, pdIdx, pteIdx)
 
@@ -181,7 +192,7 @@ func initPageTables2(vm *fakeVm) {
 	*pml4 = old.PTE_P | old.PTE_W | old.PTE_U | pdptAddr
 	*pdpt = old.PTE_P | old.PTE_W | old.PTE_U | pdAddr
 	*pd = old.PTE_P | old.PTE_W | old.PTE_U | pteAddr
-	*pte = old.PTE_P | old.PTE_W | old.PTE_U | vm.mem //0x000
+	*pte = old.PTE_P | old.PTE_W | old.PTE_U | vm.mem //(bonusOffset)
 
 	commons.Memcpy(uintptr(vm.pageTables+0x000), uintptr(unsafe.Pointer(&code[0])), uintptr(len(code)))
 }
@@ -227,7 +238,7 @@ func initSRegs(vm *fakeVm) {
 
 func initURegs(vm *fakeVm) {
 	vm.regs.rflags = 2
-	vm.regs.rip = 0x0  //uint64(vm.mem)
+	vm.regs.rip = uint64(vm.mem)
 	vm.regs.rsp = 0x00 //2 << 20
 	_, err := commons.Ioctl(vm.vcpu.fd, old.KVM_SET_REGS, uintptr(unsafe.Pointer(&vm.regs)))
 	if err != 0 {

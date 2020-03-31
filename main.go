@@ -23,7 +23,7 @@ func main() {
 	mapAreas(vm)
 	vcpuInit(vm)
 	initPageTables(vm)
-	initPageTables2(vm)
+	//initPageTables2(vm)
 	initSRegs(vm)
 	initURegs(vm)
 	runVM(vm)
